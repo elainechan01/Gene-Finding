@@ -1,5 +1,5 @@
 from collections import Counter
-import math, statistics
+import pandas as pd
 from copy import deepcopy
 
 class OpenReadingFrame:
@@ -88,7 +88,18 @@ class OpenReadingFrame:
         Returns
             list: codons (translated and concatenated if returnRawCodon is specified)
         """
-
+        if reverse:
+            frames = {
+                -1: {},
+                -2: {},
+                -3: {}
+            }
+        else:
+            frames = {
+                1: {},
+                2: {},
+                3: {}
+            }
         # determine type of string to evaluate
         if reverse:
             dna = self.findComplement()
@@ -99,14 +110,40 @@ class OpenReadingFrame:
         
         # find all start codons ('ATG') and store its position
         start_codons = {}
+        # frame 1
         for i in range(len(dna)):
             if self.translateCodon(dna[i:i+3]) == 'M':
                 start_codons[i] = dna[i:i+3]
+                if reverse:
+                    frames[-1][i] = 0
+                else:
+                    frames[1][i] = 0
+        # frame 2
+        dna = self.dna[1:]
+        for i in range(len(dna)-1):
+            if self.translateCodon(dna[i:i+3]) == 'M':
+                start_codons[i] = dna[i:i+3]
+                if reverse:
+                    frames[-2][i] = 0
+                else:
+                    frames[2][i] = 0
+        # frame 2
+        dna = self.dna[2:]
+        for i in range(len(dna)-2):
+            if self.translateCodon(dna[i:i+3]) == 'M':
+                start_codons[i] = dna[i:i+3]
+                if reverse:
+                    frames[-3][i] = 0
+                else:
+                    frames[3][i] = 0
         
         # find relative stop codons for all start codons ('TAA', 'TAG', 'TGA')
         for start in start_codons.keys():
             for index in range(start+3, len(dna), 3):
                 if self.translateCodon(dna[index:index+3]) == 'STOP':
+                    for frame in frames:
+                        if start in frames[frame].keys():
+                            frames[frame][start] = index+3
                     # add ORF by splicing the dna sequence starting from the position of the start codon and ending with the position of the stop codon
                     if not returnRawCodon:
                         # return the translated and concatenated version of ORFs if returnRawCodon is not specified
@@ -115,7 +152,7 @@ class OpenReadingFrame:
                         # return only the raw codons if returnRawCodon is specified
                         possibleORFs.append([dna[i:i+3] for i in range(start,index,3)])
                     break
-        return possibleORFs
+        return possibleORFs, frames
 
     def findMostLikelyORFs(self, sequences: list) -> list:
         """Method to find all Open Reading Frames that starts with a Start codon, ATG and ends with a Stop codon, TAA, TAG or TGA
@@ -128,17 +165,15 @@ class OpenReadingFrame:
         """
         # initialize score table and result array of most likely ORFs
         score = {}
-        res = []
         # determine likelihood ratio for each ORF
         # the score is computed as the log-likelihood ratio of the probability of the codon at its position over the frequency of occurence in the genome (likelihood of occurence at current position over other random positions in the dna sequence)
         for seq in sequences:
-            score[''.join([self.translateCodon(codon) for codon in seq])] = math.prod([self.codonFrequencyTable[codon] for codon in seq])
-        # print(score)
-        # determine the median score
-        median = statistics.median(score.values())
-        # return all ORFs that are greater or equal to the median value
-        res = [seq for seq, probability in score.items() if probability >= median]
-        return res
+            score[''.join([self.translateCodon(codon) for codon in seq])] = sum([self.codonFrequencyTable[codon] for codon in seq])
+        # pd.DataFrame.from_dict(data=csvonly, orient='index').to_csv('output/probability.csv', header=False)
+        # return most probable ORF
+        for seq in score:
+            if score[seq] == max(score.values()):
+                return seq, score[seq]
 
     def run(self) -> list:
         """Run Method
@@ -149,13 +184,15 @@ class OpenReadingFrame:
         # condition: likelihood ratio plot is preferred, return all ORFs that are most likely to occur
         if self.withLikelihoodRatio:
             self.initCodonFrequencyTable()
-            possibleSequencesFromStart = self.findAllORF(returnRawCodon=True)
-            possibleSequencesFromEnd = self.findAllORF(reverse=True, returnRawCodon=True)
-            mostLikelySequences = self.findMostLikelyORFs(possibleSequencesFromStart + possibleSequencesFromEnd)
-            return mostLikelySequences, self.codonUsage
+            possibleSequencesFromStart, framesStart = self.findAllORF(returnRawCodon=True)
+            possibleSequencesFromEnd, framesEnd = self.findAllORF(reverse=True, returnRawCodon=True)
+            mostLikelySeq, score = self.findMostLikelyORFs(possibleSequencesFromStart + possibleSequencesFromEnd)
+            return mostLikelySeq, score, self.codonUsage
         # condition: normal ORF is preferred, return all ORFs that exceed a threshold value
         else:
-            possibleSequencesFromStart = self.findAllORF()
-            possibleSequencesFromEnd = self.findAllORF(reverse=True)
-            possibleSequencesFull = [seq for seq in set(possibleSequencesFromStart + possibleSequencesFromEnd) if len(seq) >= self.threshold]
-            return possibleSequencesFull
+            possibleSequencesFromStart, framesStart = self.findAllORF()
+            possibleSequencesFromEnd, framesEnd = self.findAllORF(reverse=True)
+            possibleSequencesFull = {seq: len(seq) for seq in set(possibleSequencesFromStart + possibleSequencesFromEnd) if len(seq) >= self.threshold}
+            for seq in possibleSequencesFull:
+                if possibleSequencesFull[seq] == max(possibleSequencesFull.values()):
+                    return seq, len(seq)
