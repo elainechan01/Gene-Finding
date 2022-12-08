@@ -169,6 +169,7 @@ class OpenReadingFrame:
         # the score is computed as the log-likelihood ratio of the probability of the codon at its position over the frequency of occurence in the genome (likelihood of occurence at current position over other random positions in the dna sequence)
         for seq in sequences:
             score[''.join([self.translateCodon(codon) for codon in seq])] = sum([self.codonFrequencyTable[codon] for codon in seq])
+        # pd.DataFrame.from_dict(data=csvonly, orient='index').to_csv('output/probability.csv', header=False)
         # return most probable ORF
         for seq in score:
             if score[seq] == max(score.values()):
